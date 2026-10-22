@@ -35,7 +35,8 @@ jobs:
       - name: Verify the container builds
         run: docker build --build-arg RELEASE_VERSION=${GITHUB_SHA} -t react-ci:${GITHUB_SHA} .
 
-  publish:
+  docker:
+    name: Build, push, and scan Docker image
     if: github.event_name == 'push'
     needs: quality
     runs-on: ubuntu-24.04
@@ -63,6 +64,8 @@ jobs:
           sbom: true
       - name: Pull the published digest
         run: docker pull "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - name: Verify the published image
+        run: docker image inspect "${IMAGE}@${{ steps.build.outputs.digest }}" >/dev/null
       - name: Scan the published image
         uses: aquasecurity/trivy-action@0.29.0
         with:
@@ -76,9 +79,10 @@ jobs:
         with:
           sarif_file: trivy.sarif
 
-  propose-gitops:
+  k8s-cicd:
+    name: Trigger GitOps promotion
     if: github.event_name == 'push'
-    needs: publish
+    needs: docker
     runs-on: ubuntu-24.04
     steps:
       - name: Require GitOps configuration
@@ -95,14 +99,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
           IMAGE: ${{ env.IMAGE }}
-          DIGEST: ${{ needs.publish.outputs.digest }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
           ENVIRONMENT: ${{ github.ref_name }}
         run: |
-          test "$ENVIRONMENT" = dev -o "$ENVIRONMENT" = prod
-          branch="promote-${ENVIRONMENT}-${GITHUB_SHA::12}"
+          case "$ENVIRONMENT" in
+            dev|prod) ;;
+            *) echo "Unsupported environment: $ENVIRONMENT" >&2; exit 1 ;;
+          esac
+
+          case "$DIGEST" in
+            sha256:[0-9a-f][0-9a-f]*) ;;
+            *) echo "Invalid image digest: $DIGEST" >&2; exit 1 ;;
+          esac
+
+          branch="promote-${ENVIRONMENT}-${GITHUB_SHA::12}-${GITHUB_RUN_ATTEMPT}"
           file="environments/${ENVIRONMENT}/kustomization.yaml"
+          test -f "$file"
           git switch -c "$branch"
           sed -i -E "s#newName: .*#newName: ${IMAGE}#; s#digest: sha256:.*#digest: ${DIGEST}#" "$file"
+          grep -F "newName: ${IMAGE}" "$file"
+          grep -F "digest: ${DIGEST}" "$file"
           git config user.name github-actions
           git config user.email github-actions@users.noreply.github.com
           git add "$file"
@@ -110,7 +126,7 @@ jobs:
           git push --set-upstream origin "$branch"
           gh pr create \
             --title "Promote React ${ENVIRONMENT} ${GITHUB_SHA::12}" \
-            --body "Environment: ${ENVIRONMENT}\n\nImmutable image: ${IMAGE}@${DIGEST}" \
+            --body "Promotes the ${ENVIRONMENT} environment to immutable image ${IMAGE}@${DIGEST}." \
             --base main \
             --head "$branch"
 

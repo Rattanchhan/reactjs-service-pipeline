@@ -14,7 +14,7 @@ request creation. It never receives Kubernetes or Argo CD credentials.
 
 Configure this GitHub repository with:
 
-- variable `GITOPS_REPOSITORY`: `OWNER/argocd-repository`
+- variable `GITOPS_REPOSITORY`: `OWNER/argocd-gitops-repository`
 - secret `GITOPS_TOKEN`: fine-grained token with Contents read/write and Pull
   requests read/write on only the GitOps repository
 
