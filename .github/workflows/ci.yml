@@ -84,23 +84,30 @@ jobs:
     if: github.event_name == 'push'
     needs: docker
     runs-on: ubuntu-24.04
+    concurrency:
+      group: gitops-promotion-${{ vars.GITOPS_BRANCH || 'main' }}
+      cancel-in-progress: false
     steps:
       - name: Require GitOps configuration
         env:
           REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
           TOKEN: ${{ secrets.GITOPS_TOKEN }}
-        run: test -n "$REPOSITORY" && test -n "$TOKEN"
+          TARGET_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+        run: test -n "$REPOSITORY" && test -n "$TOKEN" && test -n "$TARGET_BRANCH"
       - name: Clone GitOps repository
         env:
           GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
-        run: gh repo clone "${{ vars.GITOPS_REPOSITORY }}" gitops-repo
-      - name: Update the matching environment and open a pull request
+          TARGET_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+        run: >-
+          gh repo clone "${{ vars.GITOPS_REPOSITORY }}" gitops-repo --
+          --branch "$TARGET_BRANCH" --single-branch
+      - name: Update the matching environment and push directly
         working-directory: gitops-repo
         env:
-          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
           IMAGE: ${{ env.IMAGE }}
           DIGEST: ${{ needs.docker.outputs.digest }}
           ENVIRONMENT: ${{ github.ref_name }}
+          TARGET_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
         run: |
           case "$ENVIRONMENT" in
             dev|prod) ;;
@@ -112,10 +119,8 @@ jobs:
             *) echo "Invalid image digest: $DIGEST" >&2; exit 1 ;;
           esac
 
-          branch="promote-${ENVIRONMENT}-${GITHUB_SHA::12}-${GITHUB_RUN_ATTEMPT}"
           file="environments/${ENVIRONMENT}/kustomization.yaml"
           test -f "$file"
-          git switch -c "$branch"
           sed -i -E "s#newName: .*#newName: ${IMAGE}#; s#digest: sha256:.*#digest: ${DIGEST}#" "$file"
           grep -F "newName: ${IMAGE}" "$file"
           grep -F "digest: ${DIGEST}" "$file"
@@ -123,10 +128,5 @@ jobs:
           git config user.email github-actions@users.noreply.github.com
           git add "$file"
           git commit -m "promote ${ENVIRONMENT} image ${GITHUB_SHA::12}"
-          git push --set-upstream origin "$branch"
-          gh pr create \
-            --title "Promote React ${ENVIRONMENT} ${GITHUB_SHA::12}" \
-            --body "Promotes the ${ENVIRONMENT} environment to immutable image ${IMAGE}@${DIGEST}." \
-            --base main \
-            --head "$branch"
+          git push origin "HEAD:${TARGET_BRANCH}"
 
