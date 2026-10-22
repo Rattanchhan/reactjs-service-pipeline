@@ -103,12 +103,12 @@ jobs:
             exit 1
           }
       - name: Clone GitOps repository
-        env:
-          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
-          TARGET_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
-        run: >-
-          gh repo clone "${{ vars.GITOPS_REPOSITORY || 'Rattanchhan/argocd-gitops-repository' }}" gitops-repo --
-          --branch "$TARGET_BRANCH" --single-branch
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.GITOPS_REPOSITORY || 'Rattanchhan/argocd-gitops-repository' }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+          ref: ${{ vars.GITOPS_BRANCH || 'main' }}
+          path: gitops-repo
       - name: Update the matching environment and push directly
         working-directory: gitops-repo
         env:
