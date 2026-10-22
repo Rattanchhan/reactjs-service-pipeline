@@ -92,16 +92,22 @@ jobs:
     steps:
       - name: Require GitOps configuration
         env:
-          REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
+          REPOSITORY: ${{ vars.GITOPS_REPOSITORY || 'Rattanchhan/argocd-gitops-repository' }}
           TOKEN: ${{ secrets.GITOPS_TOKEN }}
           TARGET_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
-        run: test -n "$REPOSITORY" && test -n "$TOKEN" && test -n "$TARGET_BRANCH"
+        run: |
+          test -n "$REPOSITORY" || { echo "::error::GitOps repository is empty"; exit 1; }
+          test -n "$TARGET_BRANCH" || { echo "::error::GitOps target branch is empty"; exit 1; }
+          test -n "$TOKEN" || {
+            echo "::error::Missing required GITOPS_TOKEN repository secret"
+            exit 1
+          }
       - name: Clone GitOps repository
         env:
           GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
           TARGET_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
         run: >-
-          gh repo clone "${{ vars.GITOPS_REPOSITORY }}" gitops-repo --
+          gh repo clone "${{ vars.GITOPS_REPOSITORY || 'Rattanchhan/argocd-gitops-repository' }}" gitops-repo --
           --branch "$TARGET_BRANCH" --single-branch
       - name: Update the matching environment and push directly
         working-directory: gitops-repo

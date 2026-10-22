@@ -14,7 +14,8 @@ branch update. It never receives Kubernetes or Argo CD credentials.
 
 Configure this GitHub repository with:
 
-- variable `GITOPS_REPOSITORY`: `OWNER/argocd-gitops-repository`
+- optional variable `GITOPS_REPOSITORY`, defaulting to
+  `Rattanchhan/argocd-gitops-repository`
 - optional variable `GITOPS_BRANCH`: target branch, defaulting to `main`
 - secret `GITOPS_TOKEN`: fine-grained token with Contents read/write on only
   the GitOps repository
