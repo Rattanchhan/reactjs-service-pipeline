@@ -1,4 +1,4 @@
-# ReactJS Service Pipeline Deployment
+## ReactJS Service Pipeline Deployment
 
 This directory is intended to be published as the application repository.
 The same React source is promoted through two protected branches:
