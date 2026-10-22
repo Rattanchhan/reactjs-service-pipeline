@@ -67,7 +67,7 @@ jobs:
       - name: Verify the published image
         run: docker image inspect "${IMAGE}@${{ steps.build.outputs.digest }}" >/dev/null
       - name: Scan the published image
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH
