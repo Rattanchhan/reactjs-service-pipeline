@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/project-02-react
+  IMAGE: ghcr.io/rattanchhan/project-02-react
 
 jobs:
   quality:
@@ -35,7 +35,8 @@ jobs:
       - name: Verify the container builds
         run: docker build --build-arg RELEASE_VERSION=${GITHUB_SHA} -t react-ci:${GITHUB_SHA} .
 
-  publish:
+  docker:
+    name: Build, push, and scan Docker image
     if: github.event_name == 'push'
     needs: quality
     runs-on: ubuntu-24.04
@@ -63,54 +64,77 @@ jobs:
           sbom: true
       - name: Pull the published digest
         run: docker pull "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - name: Verify the published image
+        run: docker image inspect "${IMAGE}@${{ steps.build.outputs.digest }}" >/dev/null
       - name: Scan the published image
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: v0.76.1
           image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          scanners: vuln
           severity: CRITICAL,HIGH
           exit-code: "1"
           format: sarif
           output: trivy.sarif
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+      - uses: github/codeql-action/upload-sarif@v4
+        if: ${{ always() && hashFiles('trivy.sarif') != '' }}
         with:
           sarif_file: trivy.sarif
 
-  propose-gitops:
+  k8s-cicd:
+    name: Trigger GitOps promotion
     if: github.event_name == 'push'
-    needs: publish
+    needs: docker
     runs-on: ubuntu-24.04
+    concurrency:
+      group: gitops-promotion-${{ vars.GITOPS_BRANCH || 'main' }}
+      cancel-in-progress: false
     steps:
       - name: Require GitOps configuration
         env:
-          REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
+          REPOSITORY: ${{ vars.GITOPS_REPOSITORY || 'Rattanchhan/argocd-gitops-repository' }}
           TOKEN: ${{ secrets.GITOPS_TOKEN }}
-        run: test -n "$REPOSITORY" && test -n "$TOKEN"
+          TARGET_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+        run: |
+          test -n "$REPOSITORY" || { echo "::error::GitOps repository is empty"; exit 1; }
+          test -n "$TARGET_BRANCH" || { echo "::error::GitOps target branch is empty"; exit 1; }
+          test -n "$TOKEN" || {
+            echo "::error::Missing required GITOPS_TOKEN repository secret"
+            exit 1
+          }
       - name: Clone GitOps repository
-        env:
-          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
-        run: gh repo clone "${{ vars.GITOPS_REPOSITORY }}" gitops-repo
-      - name: Update the matching environment and open a pull request
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.GITOPS_REPOSITORY || 'Rattanchhan/argocd-gitops-repository' }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+          ref: ${{ vars.GITOPS_BRANCH || 'main' }}
+          path: gitops-repo
+      - name: Update the matching environment and push directly
         working-directory: gitops-repo
         env:
-          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
           IMAGE: ${{ env.IMAGE }}
-          DIGEST: ${{ needs.publish.outputs.digest }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
           ENVIRONMENT: ${{ github.ref_name }}
+          TARGET_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
         run: |
-          test "$ENVIRONMENT" = dev -o "$ENVIRONMENT" = prod
-          branch="promote-${ENVIRONMENT}-${GITHUB_SHA::12}"
+          case "$ENVIRONMENT" in
+            dev|prod) ;;
+            *) echo "Unsupported environment: $ENVIRONMENT" >&2; exit 1 ;;
+          esac
+
+          case "$DIGEST" in
+            sha256:[0-9a-f][0-9a-f]*) ;;
+            *) echo "Invalid image digest: $DIGEST" >&2; exit 1 ;;
+          esac
+
           file="environments/${ENVIRONMENT}/kustomization.yaml"
-          git switch -c "$branch"
+          test -f "$file"
           sed -i -E "s#newName: .*#newName: ${IMAGE}#; s#digest: sha256:.*#digest: ${DIGEST}#" "$file"
+          grep -F "newName: ${IMAGE}" "$file"
+          grep -F "digest: ${DIGEST}" "$file"
           git config user.name github-actions
           git config user.email github-actions@users.noreply.github.com
           git add "$file"
           git commit -m "promote ${ENVIRONMENT} image ${GITHUB_SHA::12}"
-          git push --set-upstream origin "$branch"
-          gh pr create \
-            --title "Promote React ${ENVIRONMENT} ${GITHUB_SHA::12}" \
-            --body "Environment: ${ENVIRONMENT}\n\nImmutable image: ${IMAGE}@${DIGEST}" \
-            --base main \
-            --head "$branch"
+          git push origin "HEAD:${TARGET_BRANCH}"
 
