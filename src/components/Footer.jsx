@@ -31,7 +31,7 @@ const Footer = () => {
           <div className="mt-4  ">
             <h4 className="logo-name ">EarthDX</h4>
             <p className="col-lg-7">
-            We helps you to save the earth and encourage people to plant more trees. We are a team of passionate people whose goal is to improve everyone's life through disruptive products. We build great products to solve your business problems.
+            We helps you to save the earth and encourage people to plant more trees. We are a team of passionate people whose goal is to improve everyone's life through disruptive products. We build great products to solve your business problem.
             </p>
           </div>
         </div>
